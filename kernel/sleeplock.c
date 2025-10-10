@@ -40,6 +40,7 @@ releasesleep(struct sleeplock *lk)
   release(&lk->lk);
 }
 
+//检查正在运行的进程是否持有并锁住了睡眠锁
 int
 holdingsleep(struct sleeplock *lk)
 {
