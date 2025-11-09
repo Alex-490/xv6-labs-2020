@@ -114,16 +114,6 @@ printf(char *fmt, ...)
     release(&pr.lock);
 }
 
-void backtrace(){
-  uint64 fp=r_fp();
-  printf("backtrace:\n");
-  while(PGROUNDUP(fp)-PGROUNDDOWN(fp)==PGSIZE){
-    uint64 addr=*(uint64*)(fp-8);
-    fp=*(uint64*)(fp-16);
-    printf("%p\n",addr);
-  }
-}
-
 void
 panic(char *s)
 {
