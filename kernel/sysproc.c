@@ -8,6 +8,13 @@
 #include "proc.h"
 
 uint64
+sys_sigalarm(void)
+{
+  if(argint(0,&myproc()->alarm_interval)<0||argaddr(1,&myproc()->alarm_handler)<0)  return -1;
+  return 0;
+}
+
+uint64
 sys_exit(void)
 {
   int n;
