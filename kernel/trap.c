@@ -5,6 +5,7 @@
 #include "spinlock.h"
 #include "proc.h"
 #include "defs.h"
+#include "fcntl.h"
 
 struct spinlock tickslock;
 uint ticks;
@@ -15,6 +16,19 @@ extern char trampoline[], uservec[], userret[];
 void kernelvec();
 
 extern int devintr();
+
+int mmap_handler(int va,int cause);
+
+struct file {
+  enum { FD_NONE, FD_PIPE, FD_INODE, FD_DEVICE } type;
+  int ref; // reference count
+  char readable;
+  char writable;
+  struct pipe *pipe; // FD_PIPE
+  struct inode *ip;  // FD_INODE and FD_DEVICE
+  uint off;          // FD_INODE
+  short major;       // FD_DEVICE
+};
 
 void
 trapinit(void)
@@ -67,7 +81,15 @@ usertrap(void)
     syscall();
   } else if((which_dev = devintr()) != 0){
     // ok
-  } else {
+  } else if(r_scause()==13||r_scause()==15){
+#ifdef LAB_MMAP
+    uint64 fault_va=r_stval();
+    if(PGROUNDUP(p->trapframe->sp)-1<fault_va&&fault_va<p->sz){
+      if(mmap_handler(r_stval(),r_scause())!=0) p->killed=1;
+      else p->killed=1;
+    }
+#endif
+  }else {
     printf("usertrap(): unexpected scause %p pid=%d\n", r_scause(), p->pid);
     printf("            sepc=%p stval=%p\n", r_sepc(), r_stval());
     p->killed = 1;
@@ -216,5 +238,47 @@ devintr()
   } else {
     return 0;
   }
+}
+
+int mmap_handler(int va,int cause){
+  struct proc* p=myproc();
+  int i;
+
+  for(i=0;i<NVMA;i++){
+    if(p->vma[i].used&&p->vma[i].addr<=va&&va<=p->vma[i].addr+p->vma[i].len-1)  break;
+  }
+
+  if(i==NVMA) return -1;
+
+  int flags=PTE_U;
+  if(p->vma[i].prot&PROT_READ) flags|=PTE_R;
+  if(p->vma[i].prot&PROT_WRITE) flags|=PTE_W;
+  if(p->vma[i].prot&PROT_EXEC) flags|=PTE_X;
+
+  struct file *vf=p->vma[i].vfile;
+  if(cause==13&&vf->readable==0)  return -1;
+  if(cause==15&&vf->writable==0)  return -1;
+
+  void* pa=kalloc();
+  if(pa==0) return -1;
+  memset(pa,0,PGSIZE);
+
+  ilock(vf->ip);
+  int offset=p->vma[i].offset+PGROUNDDOWN(va-p->vma[i].offset);
+  int readbytes=readi(vf->ip,0,(uint64)pa,offset,PGSIZE);
+  if(readbytes==0){
+    iunlock(vf->ip);
+    kfree(pa);
+    return -1;
+  }
+
+  iunlock(vf->ip);
+
+  if(mappages(p->pagetable,PGROUNDDOWN(va),PGSIZE,(uint64)pa,flags)!=0){
+    kfree(pa);
+    return -1;
+  }
+
+  return 0;
 }
 
